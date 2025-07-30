@@ -16,10 +16,28 @@ def start_quiz(request):
     if not category:
         return Response({'error': 'Category is required'}, status=status.HTTP_400_BAD_REQUEST)
     
-    # For testing, return a mock response
+    # Get a random medium difficulty question to start
+    question = get_random_question(category, 'medium')
+    
+    if not question:
+        return Response({'error': 'No questions available for this category'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # For testing without authentication, create a mock session ID
+    session_id = random.randint(1000, 9999)
+    
+    # Prepare answers (shuffle them)
+    all_answers = [question.correct_answer] + question.incorrect_answers
+    random.shuffle(all_answers)
+    
     return Response({
-        'quiz_session_id': 1,
-        'message': f'Quiz started for category: {category}',
+        'quiz_session_id': session_id,
+        'question': {
+            'id': question.id,
+            'question_text': question.question_text,
+            'category': question.category,
+            'difficulty': question.difficulty,
+            'answers': all_answers
+        },
         'current_difficulty': 'medium'
     })
 
@@ -31,14 +49,47 @@ def submit_answer(request):
     question_id = request.data.get('question_id')
     selected_answer = request.data.get('selected_answer')
     
-    # For testing, return a mock response
+    # Get the question
+    try:
+        question = Question.objects.get(id=question_id)
+    except Question.DoesNotExist:
+        return Response({'error': 'Question not found'}, status=status.HTTP_404_NOT_FOUND)
+    
+    # Check if answer is correct
+    is_correct = selected_answer == question.correct_answer
+    
+    # For testing, simulate difficulty adjustment
+    current_difficulty = 'medium'
+    if is_correct:
+        current_difficulty = 'hard'
+    else:
+        current_difficulty = 'easy'
+    
+    # Get next question based on new difficulty
+    next_question = get_random_question(question.category, current_difficulty)
+    
+    if next_question:
+        # Prepare answers for next question
+        all_answers = [next_question.correct_answer] + next_question.incorrect_answers
+        random.shuffle(all_answers)
+        
+        next_question_data = {
+            'id': next_question.id,
+            'question_text': next_question.question_text,
+            'category': next_question.category,
+            'difficulty': next_question.difficulty,
+            'answers': all_answers
+        }
+    else:
+        next_question_data = None
+    
     return Response({
-        'is_correct': True,
-        'correct_answer': 'Test Answer',
-        'points_earned': 10,
-        'current_difficulty': 'medium',
-        'total_score': 10,
-        'message': 'Answer submitted successfully'
+        'is_correct': is_correct,
+        'correct_answer': question.correct_answer,
+        'points_earned': 10 if is_correct else 0,
+        'current_difficulty': current_difficulty,
+        'total_score': 10 if is_correct else 0,
+        'next_question': next_question_data
     })
 
 @api_view(['GET'])
