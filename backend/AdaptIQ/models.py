@@ -67,6 +67,15 @@ class QuizSession(models.Model):
         }
         return difficulty_points.get(self.current_difficulty, 10)
     
+    def force_quit_due_to_cheating(self):
+        """Force quit the quiz due to cheating detection"""
+        self.is_active = False
+        self.save()
+        return {
+            'status': 'terminated',
+            'reason': 'cheating_detected'
+        }
+    
     def __str__(self):
         return f"{self.user.username} - {self.category} - {self.current_difficulty} - Score: {self.total_score}"
 
@@ -82,6 +91,55 @@ class UserAnswer(models.Model):
     
     def __str__(self):
         return f"{self.user.username} - {self.question.question_text[:30]} - {'Correct' if self.is_correct else 'Incorrect'}"
+
+class UserSession(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    quiz_session = models.ForeignKey(QuizSession, on_delete=models.CASCADE, null=True, blank=True)
+    session_start = models.DateTimeField(auto_now_add=True)
+    session_end = models.DateTimeField(null=True, blank=True)
+    
+    # OpenCV tracking
+    movement_warnings = models.IntegerField(default=0)
+    max_warnings = models.IntegerField(default=2)  # 2 warnings allowed
+    is_cheating_detected = models.BooleanField(default=False)
+    camera_feed_active = models.BooleanField(default=False)
+    
+    # Warning details
+    warning_history = models.JSONField(default=list)  # Store warning timestamps and reasons
+    
+    def add_warning(self, warning_type, reason):
+        """Add a warning and check if quiz should be terminated"""
+        self.movement_warnings += 1
+        
+        warning_data = {
+            'timestamp': timezone.now().isoformat(),
+            'type': warning_type,  # 'looking_away', 'left_frame'
+            'reason': reason,
+            'warning_number': self.movement_warnings
+        }
+        
+        self.warning_history.append(warning_data)
+        
+        # Check if this is the 3rd warning (force quit)
+        if self.movement_warnings >= 3:
+            self.is_cheating_detected = True
+            self.session_end = timezone.now()
+            if self.quiz_session:
+                self.quiz_session.is_active = False
+                self.quiz_session.save()
+        
+        self.save()
+        return self.movement_warnings >= 3  # Returns True if should force quit
+    
+    def reset_warnings(self):
+        """Reset warnings (for new quiz session)"""
+        self.movement_warnings = 0
+        self.is_cheating_detected = False
+        self.warning_history = []
+        self.save()
+    
+    def __str__(self):
+        return f"{self.user.username} - Warnings: {self.movement_warnings}/3"
 
 class KidMode(models.Model):
     user = models.OneToOneField(User, on_delete=models.CASCADE)
