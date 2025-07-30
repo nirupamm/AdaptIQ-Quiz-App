@@ -7,6 +7,9 @@ from .models import Question, QuizSession, UserAnswer, KidMode
 from .serializers import QuestionSerializer, QuizSessionSerializer, UserAnswerSerializer, KidModeSerializer
 import random
 
+# Global storage for testing (in production, use database)
+quiz_sessions = {}
+
 @api_view(['POST'])
 # @permission_classes([IsAuthenticated])  # Commented out for testing
 def start_quiz(request):
@@ -24,6 +27,17 @@ def start_quiz(request):
     
     # For testing without authentication, create a mock session ID
     session_id = random.randint(1000, 9999)
+    
+    # Initialize session state for AI tracking
+    quiz_sessions[session_id] = {
+        'category': category,
+        'current_difficulty': 'medium',
+        'consecutive_correct': 0,
+        'consecutive_incorrect': 0,
+        'total_score': 0,
+        'total_questions_answered': 0,
+        'max_questions': 10  # Set limit to 10 questions for testing
+    }
     
     # Prepare answers (shuffle them)
     all_answers = [question.correct_answer] + question.incorrect_answers
@@ -44,7 +58,7 @@ def start_quiz(request):
 @api_view(['POST'])
 # @permission_classes([IsAuthenticated])  # Commented out for testing
 def submit_answer(request):
-    """Submit an answer and get next question"""
+    """Submit an answer and get next question using proper AI logic"""
     quiz_session_id = request.data.get('quiz_session_id')
     question_id = request.data.get('question_id')
     selected_answer = request.data.get('selected_answer')
@@ -58,37 +72,77 @@ def submit_answer(request):
     # Check if answer is correct
     is_correct = selected_answer == question.correct_answer
     
-    # For testing, simulate difficulty adjustment
-    current_difficulty = 'medium'
+    # Get session state
+    if quiz_session_id not in quiz_sessions:
+        return Response({'error': 'Invalid session ID'}, status=status.HTTP_400_BAD_REQUEST)
+    
+    session = quiz_sessions[quiz_session_id]
+    session['total_questions_answered'] += 1
+    
+    # Apply AI logic
     if is_correct:
-        current_difficulty = 'hard'
-    else:
-        current_difficulty = 'easy'
-    
-    # Get next question based on new difficulty
-    next_question = get_random_question(question.category, current_difficulty)
-    
-    if next_question:
-        # Prepare answers for next question
-        all_answers = [next_question.correct_answer] + next_question.incorrect_answers
-        random.shuffle(all_answers)
+        session['consecutive_correct'] += 1
+        session['consecutive_incorrect'] = 0
         
-        next_question_data = {
-            'id': next_question.id,
-            'question_text': next_question.question_text,
-            'category': next_question.category,
-            'difficulty': next_question.difficulty,
-            'answers': all_answers
-        }
+        # Calculate points based on current difficulty
+        difficulty_points = {'easy': 5, 'medium': 10, 'hard': 20}
+        points_earned = difficulty_points.get(session['current_difficulty'], 10)
+        session['total_score'] += points_earned
+        
+        # Rule: If 2 consecutive correct, increase difficulty
+        if session['consecutive_correct'] >= 2:
+            if session['current_difficulty'] == 'easy':
+                session['current_difficulty'] = 'medium'
+                session['consecutive_correct'] = 0  # Reset counter after difficulty change
+            elif session['current_difficulty'] == 'medium':
+                session['current_difficulty'] = 'hard'
+                session['consecutive_correct'] = 0  # Reset counter after difficulty change
+            # If already 'hard', stay 'hard' (no further increase)
     else:
+        session['consecutive_incorrect'] += 1
+        session['consecutive_correct'] = 0
+        points_earned = 0
+        
+        # Rule: If 2 consecutive incorrect, decrease difficulty
+        if session['consecutive_incorrect'] >= 2:
+            if session['current_difficulty'] == 'hard':
+                session['current_difficulty'] = 'medium'
+                session['consecutive_incorrect'] = 0  # Reset counter after difficulty change
+            elif session['current_difficulty'] == 'medium':
+                session['current_difficulty'] = 'easy'
+                session['consecutive_incorrect'] = 0  # Reset counter after difficulty change
+            # If already 'easy', stay 'easy' (no further decrease)
+    
+    # Check if quiz is complete (reached max questions)
+    if session['total_questions_answered'] >= session['max_questions']:
         next_question_data = None
+    else:
+        # Get next question based on new difficulty
+        next_question = get_random_question(question.category, session['current_difficulty'])
+        
+        if next_question:
+            # Prepare answers for next question
+            all_answers = [next_question.correct_answer] + next_question.incorrect_answers
+            random.shuffle(all_answers)
+            
+            next_question_data = {
+                'id': next_question.id,
+                'question_text': next_question.question_text,
+                'category': next_question.category,
+                'difficulty': next_question.difficulty,
+                'answers': all_answers
+            }
+        else:
+            next_question_data = None
     
     return Response({
         'is_correct': is_correct,
         'correct_answer': question.correct_answer,
-        'points_earned': 10 if is_correct else 0,
-        'current_difficulty': current_difficulty,
-        'total_score': 10 if is_correct else 0,
+        'points_earned': points_earned,
+        'current_difficulty': session['current_difficulty'],
+        'total_score': session['total_score'],
+        'questions_answered': session['total_questions_answered'],
+        'max_questions': session['max_questions'],
         'next_question': next_question_data
     })
 
@@ -157,4 +211,4 @@ def get_random_question(category, difficulty):
     
     if questions.exists():
         return random.choice(questions)
-    return None
+    return None 

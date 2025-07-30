@@ -43,8 +43,11 @@ class QuizSession(models.Model):
             if self.consecutive_correct >= 2:
                 if self.current_difficulty == 'easy':
                     self.current_difficulty = 'medium'
+                    self.consecutive_correct = 0  # Reset counter after difficulty change
                 elif self.current_difficulty == 'medium':
                     self.current_difficulty = 'hard'
+                    self.consecutive_correct = 0  # Reset counter after difficulty change
+                # If already 'hard', stay 'hard' (no further increase)
         else:
             self.consecutive_incorrect += 1
             self.consecutive_correct = 0
@@ -53,8 +56,11 @@ class QuizSession(models.Model):
             if self.consecutive_incorrect >= 2:
                 if self.current_difficulty == 'hard':
                     self.current_difficulty = 'medium'
+                    self.consecutive_incorrect = 0  # Reset counter after difficulty change
                 elif self.current_difficulty == 'medium':
                     self.current_difficulty = 'easy'
+                    self.consecutive_incorrect = 0  # Reset counter after difficulty change
+                # If already 'easy', stay 'easy' (no further decrease)
         
         self.save()
     
@@ -149,4 +155,4 @@ class KidMode(models.Model):
     time_limit_per_question = models.IntegerField(default=60)  # seconds
     
     def __str__(self):
-        return f"{self.user.username} - Kid Mode: {'Enabled' if self.is_enabled else 'Disabled'}"
+        return f"{self.user.username} - Kid Mode: {'Enabled' if self.is_enabled else 'Disabled'}" 
